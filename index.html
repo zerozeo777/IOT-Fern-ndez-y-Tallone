@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TP control con IOT Fernández y Tallone.</title>
+    <!-- Tailwind CSS for modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MQTT.js library for WebSockets browser connection -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(229, 231, 235, 0.8);
+        }
+        
+        /* Smooth progress gauge transition */
+        .gauge-circle {
+            transition: stroke-dashoffset 0.8s ease-in-out, stroke 0.5s ease;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+
+        .pulse-dot {
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            animation: pulse-green 2s infinite;
+        }
+
+        .pulse-dot-red {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse-red 2s infinite;
+        }
+
+        @keyframes pulse-green {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        @keyframes pulse-red {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white">
+
+    <!-- Top Navigation / Header -->
+    <header class="w-full bg-slate-800/80 backdrop-blur-md border-b border-slate-700/60 sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-sky-500/10 rounded-xl border border-sky-500/20 text-sky-400">
+                    <i class="fa-solid fa-microchip text-2xl"></i>
+                </div>
+                <div>
+                    <!-- Main Title Required by Specification -->
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">
+                        TP control con IOT Fernández y Tallone.
+                    </h1>
+                    <p class="text-xs text-slate-400">Monitoreo y Control ESP32 - LM335 & Servomotor</p>
+                </div>
+            </div>
+
+            <!-- Connection Status Badge -->
+            <div class="flex items-center gap-2 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-700/80">
+                <span id="status-indicator" class="w-3 h-3 rounded-full bg-amber-500"></span>
+                <span id="status-text" class="text-xs font-semibold uppercase tracking-wider text-amber-400">Desconectado</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 py-8 space-y-6">
+        
+        <!-- Broker Info Banner -->
+        <div class="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-network-wired text-sky-400"></i>
+                <span>Broker: <strong class="text-slate-200">test.mosquitto.org</strong></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-plug text-sky-400"></i>
+                <span>Puerto WebSocket: <strong class="text-slate-200">8080 (WS) / 8081 (WSS)</strong> <span class="text-slate-500">(Equivalente TCP 1883)</span></span>
+            </div>
+            <button onclick="reconnectMQTT()" class="text-sky-400 hover:text-sky-300 font-medium transition flex items-center gap-1">
+                <i class="fa-solid fa-rotate-right"></i> Reconectar
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <!-- CARD 1: Temperatura Section -->
+            <div class="bg-slate-800/60 border border-slate-700/80 rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-temperature-half text-rose-500 text-lg"></i>
+                        <!-- Topic Sub-title required -->
+                        <h2 class="text-lg font-bold text-white tracking-wide">Temperatura</h2>
+                    </div>
+                    <span class="text-xs px-2.5 py-1 rounded-md bg-slate-700/60 text-slate-300 font-mono">
+                        LM335
+                    </span>
+                </div>
+
+                <!-- Temperature Visual Indicator Gauge -->
+                <div class="flex flex-col items-center justify-center py-6 relative">
+                    <svg class="w-48 h-48" viewBox="0 0 100 100">
+                        <!-- Background Circle -->
+                        <circle
+                            class="text-slate-700"
+                            stroke-width="8"
+                            stroke="currentColor"
+                            fill="transparent"
+                            r="38"
+                            cx="50"
+                            cy="50"
+                        />
+                        <!-- Gauge Circle Bar -->
+                        <circle
+                            id="gauge-bar"
+                            class="gauge-circle text-rose-500"
+                            stroke-width="8"
+                            stroke-dasharray="238.76"
+                            stroke-dashoffset="238.76"
+                            stroke-linecap="round"
+                            stroke="currentColor"
+                            fill="transparent"
+                            r="38"
+                            cx="50"
+                            cy="50"
+                        />
+                    </svg>
+
+                    <!-- Center Temperature Text Display -->
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span id="temp-value" class="text-4xl sm:text-5xl font-extrabold text-white tracking-tight">--</span>
+                        <span class="text-slate-400 text-sm font-medium mt-1">°C</span>
+                    </div>
+                </div>
+
+                <!-- Topic Detail Footer -->
+                <div class="mt-4 pt-4 border-t border-slate-700/50 flex flex-col gap-1">
+                    <span class="text-xs text-slate-400">Tópico MQTT de Lectura:</span>
+                    <span class="text-xs font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg text-sky-300 border border-slate-700/50 truncate">
+                        etu Siemens/Fernández/temperatura
+                    </span>
+                </div>
+            </div>
+
+            <!-- CARD 2: Servo Control Section -->
+            <div class="bg-slate-800/60 border border-slate-700/80 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-gear text-sky-400 text-lg"></i>
+                            <h2 class="text-lg font-bold text-white tracking-wide">Control de Servomotor</h2>
+                        </div>
+                        <span id="servo-state-badge" class="text-xs px-2.5 py-1 rounded-md bg-slate-700/60 text-slate-300 font-medium">
+                            Estado: Indeterminado
+                        </span>
+                    </div>
+
+                    <p class="text-sm text-slate-400 mb-6">
+                        Envía órdenes al servomotor conectado al ESP32 para cambiar la posición física entre 0° y 90°.
+                    </p>
+
+                    <!-- Servo Visual Indicator -->
+                    <div class="flex justify-center items-center py-4 mb-6 bg-slate-900/50 rounded-2xl border border-slate-700/40 p-4">
+                        <div class="relative w-32 h-32 flex items-center justify-center">
+                            <!-- Background Half Arc -->
+                            <div class="w-28 h-28 border-4 border-slate-700 border-t-sky-500 rounded-full transition-all duration-500 flex items-center justify-center">
+                                <div id="servo-pointer" class="w-1 h-12 bg-sky-400 origin-bottom transform rotate-0 transition-transform duration-700 ease-out rounded-full shadow-lg"></div>
+                            </div>
+                            <span class="absolute bottom-2 text-xs font-bold text-slate-300" id="servo-angle-text">0°</span>
+                        </div>
+                    </div>
+
+                    <!-- Required Control Buttons -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- Abrir Button (Sends "1" to topic) -->
+                        <button 
+                            onclick="sendServoCommand('1')"
+                            class="group relative inline-flex items-center justify-center p-0.5 overflow-hidden text-sm font-medium text-white rounded-2xl group bg-gradient-to-br from-emerald-500 to-teal-600 group-hover:from-emerald-500 group-hover:to-teal-600 hover:text-white shadow-lg shadow-emerald-900/30 active:scale-95 transition-all duration-200"
+                        >
+                            <span class="relative w-full px-5 py-3.5 transition-all ease-in duration-75 rounded-2xl bg-opacity-0 flex items-center justify-center gap-2 font-bold text-base">
+                                <i class="fa-solid fa-lock-open"></i>
+                                Abrir (90°)
+                            </span>
+                        </button>
+
+                        <!-- Cerrar Button (Sends "0" to topic) -->
+                        <button 
+                            onclick="sendServoCommand('0')"
+                            class="group relative inline-flex items-center justify-center p-0.5 overflow-hidden text-sm font-medium text-white rounded-2xl group bg-gradient-to-br from-rose-500 to-red-600 group-hover:from-rose-500 group-hover:to-red-600 hover:text-white shadow-lg shadow-rose-900/30 active:scale-95 transition-all duration-200"
+                        >
+                            <span class="relative w-full px-5 py-3.5 transition-all ease-in duration-75 rounded-2xl bg-opacity-0 flex items-center justify-center gap-2 font-bold text-base">
+                                <i class="fa-solid fa-lock"></i>
+                                Cerrar (0°)
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Topic Detail Footer -->
+                <div class="mt-6 pt-4 border-t border-slate-700/50 flex flex-col gap-1">
+                    <span class="text-xs text-slate-400">Tópico MQTT de Comando:</span>
+                    <span class="text-xs font-mono bg-slate-900/80 px-3 py-1.5 rounded-lg text-sky-300 border border-slate-700/50 truncate">
+                        etu Siemens/Tallone/servo
+                    </span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Activity Log Console Card -->
+        <div class="bg-slate-800/60 border border-slate-700/80 rounded-3xl p-6 shadow-xl">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-slate-400"></i>
+                    <h3 class="text-md font-bold text-white">Consola de Eventos MQTT</h3>
+                </div>
+                <button onclick="clearConsole()" class="text-xs text-slate-400 hover:text-slate-200 bg-slate-700/50 px-3 py-1 rounded-lg transition">
+                    <i class="fa-solid fa-trash-can mr-1"></i> Limpiar
+                </button>
+            </div>
+            <div id="console-log" class="bg-slate-950 rounded-xl p-4 h-40 overflow-y-auto font-mono text-xs text-slate-300 space-y-1.5 border border-slate-800">
+                <div class="text-slate-500">[Sistema] Inicializando panel de control IoT...</div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // MQTT Topics definition
+        const TEMP_TOPIC = "etu Siemens/Fernández/temperatura";
+        const SERVO_TOPIC = "etu Siemens/Tallone/servo";
+
+        // Mosquitto Broker Configuration for WebSockets
+        // Browsers require WS (8080) or WSS (8081 / 443)
+        const BROKER_URL = 'wss://test.mosquitto.org:8081/mqtt';
+        const FALLBACK_BROKER_URL = 'ws://test.mosquitto.org:8080/mqtt';
+
+        let client = null;
+
+        // DOM Element references
+        const tempValueEl = document.getElementById('temp-value');
+        const gaugeBar = document.getElementById('gauge-bar');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const consoleLog = document.getElementById('console-log');
+        const servoPointer = document.getElementById('servo-pointer');
+        const servoAngleText = document.getElementById('servo-angle-text');
+        const servoStateBadge = document.getElementById('servo-state-badge');
+
+        // Helper to append logs to console
+        function logMessage(type, message) {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = "flex gap-2 items-start";
+
+            let colorClass = "text-slate-300";
+            let prefix = "[INFO]";
+
+            if (type === 'rx') {
+                colorClass = "text-emerald-400";
+                prefix = "[RECIBIDO]";
+            } else if (type === 'tx') {
+                colorClass = "text-sky-400";
+                prefix = "[ENVIADO]";
+            } else if (type === 'error') {
+                colorClass = "text-rose-400";
+                prefix = "[ERROR]";
+            } else if (type === 'sys') {
+                colorClass = "text-amber-400";
+                prefix = "[SISTEMA]";
+            }
+
+            entry.innerHTML = `<span class="text-slate-500">${time}</span> <span class="${colorClass} font-semibold">${prefix}</span> <span>${escapeHtml(message)}</span>`;
+            consoleLog.appendChild(entry);
+            consoleLog.scrollTop = consoleLog.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function clearConsole() {
+            consoleLog.innerHTML = '<div class="text-slate-500">[Sistema] Consola limpia.</div>';
+        }
+
+        // Connect to MQTT Broker
+        function initMQTT(brokerUrl = BROKER_URL) {
+            updateConnectionStatus('connecting', 'Conectando...');
+            logMessage('sys', `Intentando conexión con broker MQTT en ${brokerUrl}`);
+
+            const clientId = 'web_dashboard_' + Math.random().toString(16).substr(2, 8);
+
+            try {
+                client = mqtt.connect(brokerUrl, {
+                    clientId: clientId,
+                    clean: true,
+                    connectTimeout: 5000,
+                    reconnectPeriod: 4000
+                });
+
+                client.on('connect', () => {
+                    updateConnectionStatus('connected', 'Conectado');
+                    logMessage('sys', '¡Conexión establecida exitosamente!');
+
+                    // Subscribe to Temperature Topic
+                    client.subscribe(TEMP_TOPIC, (err) => {
+                        if (!err) {
+                            logMessage('sys', `Suscrito al tópico: ${TEMP_TOPIC}`);
+                        } else {
+                            logMessage('error', `Error al suscribirse: ${err.message}`);
+                        }
+                    });
+
+                    // Optional: Subscribe to Servo topic to listen for changes from other clients/ESP32
+                    client.subscribe(SERVO_TOPIC);
+                });
+
+                client.on('message', (topic, payload) => {
+                    const messageStr = payload.toString();
+                    logMessage('rx', `Tópico: ${topic} | Valor: ${messageStr}`);
+
+                    if (topic === TEMP_TOPIC) {
+                        handleTemperatureValue(messageStr);
+                    } else if (topic === SERVO_TOPIC) {
+                        handleServoFeedback(messageStr);
+                    }
+                });
+
+                client.on('error', (err) => {
+                    logMessage('error', `Error MQTT: ${err.message}`);
+                    updateConnectionStatus('disconnected', 'Error');
+                });
+
+                client.on('offline', () => {
+                    updateConnectionStatus('disconnected', 'Sin Conexión');
+                });
+
+                client.on('reconnect', () => {
+                    updateConnectionStatus('connecting', 'Reconectando...');
+                });
+
+            } catch (err) {
+                logMessage('error', `Excepción en conexión MQTT: ${err.message}`);
+                updateConnectionStatus('disconnected', 'Desconectado');
+            }
+        }
+
+        // Update UI Connection Badge
+        function updateConnectionStatus(state, label) {
+            statusText.innerText = label;
+            statusIndicator.className = 'w-3 h-3 rounded-full ';
+
+            if (state === 'connected') {
+                statusIndicator.classList.add('bg-emerald-500', 'pulse-dot');
+                statusText.className = 'text-xs font-semibold uppercase tracking-wider text-emerald-400';
+            } else if (state === 'connecting') {
+                statusIndicator.classList.add('bg-amber-500');
+                statusText.className = 'text-xs font-semibold uppercase tracking-wider text-amber-400';
+            } else {
+                statusIndicator.classList.add('bg-rose-500', 'pulse-dot-red');
+                statusText.className = 'text-xs font-semibold uppercase tracking-wider text-rose-400';
+            }
+        }
+
+        // Process incoming temperature reading from LM335 / ESP32
+        function handleTemperatureValue(val) {
+            const tempNum = parseFloat(val);
+
+            if (isNaN(tempNum)) {
+                tempValueEl.innerText = val;
+                return;
+            }
+
+            tempValueEl.innerText = tempNum.toFixed(1);
+
+            // Update Gauge Circle Progress (Assuming range -10°C to 100°C)
+            const minTemp = 0;
+            const maxTemp = 80;
+            const clampedTemp = Math.min(Math.max(tempNum, minTemp), maxTemp);
+            
+            // Total circumferential length r=38 -> 2 * PI * 38 ≈ 238.76
+            const totalDash = 238.76;
+            const percentage = (clampedTemp - minTemp) / (maxTemp - minTemp);
+            const offset = totalDash - (percentage * totalDash);
+
+            gaugeBar.style.strokeDashoffset = offset;
+
+            // Change color dynamically based on temperature
+            if (tempNum < 18) {
+                gaugeBar.setAttribute('class', 'gauge-circle text-sky-400');
+            } else if (tempNum >= 18 && tempNum < 32) {
+                gaugeBar.setAttribute('class', 'gauge-circle text-emerald-400');
+            } else {
+                gaugeBar.setAttribute('class', 'gauge-circle text-rose-500');
+            }
+        }
+
+        // Handle servo position command sending
+        function sendServoCommand(payloadStr) {
+            if (!client || !client.connected) {
+                logMessage('error', 'No se puede enviar comando: Broker desconectado.');
+                return;
+            }
+
+            client.publish(SERVO_TOPIC, payloadStr, { qos: 0, retain: false }, (err) => {
+                if (!err) {
+                    logMessage('tx', `Publicado "${payloadStr}" en [${SERVO_TOPIC}]`);
+                    handleServoFeedback(payloadStr);
+                } else {
+                    logMessage('error', `Fallo al publicar en servo: ${err.message}`);
+                }
+            });
+        }
+
+        // Update UI state for Servo display
+        function handleServoFeedback(payload) {
+            if (payload === "1") {
+                servoPointer.style.transform = "rotate(90deg)";
+                servoAngleText.innerText = "90° (Abierto)";
+                servoStateBadge.innerText = "Estado: Abierto (1)";
+                servoStateBadge.className = "text-xs px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-400 font-medium border border-emerald-500/30";
+            } else if (payload === "0") {
+                servoPointer.style.transform = "rotate(-90deg)";
+                servoAngleText.innerText = "0° (Cerrado)";
+                servoStateBadge.innerText = "Estado: Cerrado (0)";
+                servoStateBadge.className = "text-xs px-2.5 py-1 rounded-md bg-rose-500/20 text-rose-400 font-medium border border-rose-500/30";
+            }
+        }
+
+        function reconnectMQTT() {
+            if (client) {
+                client.end(true, () => {
+                    initMQTT(BROKER_URL);
+                });
+            } else {
+                initMQTT(BROKER_URL);
+            }
+        }
+
+        window.onload = function() {
+            initMQTT();
+        };
+    </script>
+</body>
+</html>
